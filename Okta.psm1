@@ -440,6 +440,14 @@ function _oktaMakeCall()
         [parameter(Mandatory=$false)][String]$userAgent,
         [parameter(Mandatory=$false)][String]$contentType = "application/json"
     )
+    <# Lets build in a websession switcher #>
+    $oOrgVar = $uri.split(".")[0].split("//")[-1] # holds oOrg Info for state save
+    if ((Get-Variable -Name $("myWebSession" + $oOrgVar) -Scope Global -ErrorAction SilentlyContinue) -ne $null) {
+      $Global:myWebSession = (Get-Variable -Name $("myWebSession" + $oOrgVar) -Scope Global).value
+    } else {
+        # First Run Through
+    }
+    <# End Switcher #>
 
     if (!$userAgent)
     {
@@ -467,10 +475,10 @@ function _oktaMakeCall()
             {
                 $postData = ConvertTo-Json $body -Depth 10
                 Write-Verbose($postData)
-                $request2 = Invoke-WebRequest -Uri $uri -Method $method -UserAgent $userAgent -Headers $headers `
+                $request2 = Invoke-WebRequest -Uri $uri -Method $method -UserAgent $userAgent -UseBasicParsing -Headers $headers `
                             -ContentType $contentType -Verbose:$oktaVerbose -Body $postData -ErrorVariable evar -SessionVariable Global:myWebSession
             } else {
-                $request2 = Invoke-WebRequest -Uri $uri -Method $method -UserAgent $userAgent -Headers $headers `
+                $request2 = Invoke-WebRequest -Uri $uri -Method $method -UserAgent $userAgent -UseBasicParsing -Headers $headers `
                             -ContentType $contentType -Verbose:$oktaVerbose -ErrorVariable evar -SessionVariable Global:myWebSession
             }
         } else {
@@ -478,10 +486,10 @@ function _oktaMakeCall()
             {
                 $postData = ConvertTo-Json $body -Depth 10
                 Write-Verbose($postData)
-                $request2 = Invoke-WebRequest -Uri $uri -Method $method -UserAgent $userAgent -Headers $headers `
+                $request2 = Invoke-WebRequest -Uri $uri -Method $method -UserAgent $userAgent -UseBasicParsing -Headers $headers `
                             -ContentType $contentType -Verbose:$oktaVerbose -Body $postData -ErrorVariable evar -WebSession $Global:myWebSession
             } else {
-                $request2 = Invoke-WebRequest -Uri $uri -Method $method -UserAgent $userAgent -Headers $headers `
+                $request2 = Invoke-WebRequest -Uri $uri -Method $method -UserAgent $userAgent -UseBasicParsing -Headers $headers `
                             -ContentType $contentType -Verbose:$oktaVerbose -ErrorVariable evar -WebSession $Global:myWebSession  
             }
         }
@@ -491,9 +499,9 @@ function _oktaMakeCall()
         
         $code = $_.Exception.Response.StatusCode
         
-        if ( $_.Exception.Response.Headers.Contains('X-Okta-Requst-Id') )
+        if ( $_.Exception.Response.Headers.Contains('X-Okta-Request-Id') )
         {
-            $reqId = $_.Exception.Response.Headers.GetValues('X-Okta-Requst-Id')
+            $reqId = $_.Exception.Response.Headers.GetValues('X-Okta-Request-Id')
             Write-Warning("Okta Request ID: " + $reqId[0])
         }
         
@@ -634,7 +642,11 @@ function _oktaMakeCall()
     }
 
     if ($rateLimt){ _oktaRateLimitCheck }
-    
+
+    <# Variable Switcher - save state #>
+    Set-Variable -Name $("myWebSession" + $oOrgVar) -value $(Get-Variable -Name "myWebSession"  -Scope Global).value -Scope Global
+    <# End - Save state#>
+
     return @{ result = $result ; next = $next ; ratelimit = $rateLimt }
 }
 
@@ -2036,6 +2048,43 @@ function oktaResetPasswordbyID()
     return $request
 }
 
+function oktaSetPasswordbyID()
+{
+   param
+    (
+        [parameter(Mandatory=$false)][ValidateLength(1,100)][String]$oOrg=$oktaDefOrg,
+        [parameter(Mandatory=$true)][ValidateLength(20,20)][String]$uid,
+        [parameter(Mandatory=$true)][Security.SecureString]$password
+    )
+    $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password)
+    $PlainPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+    $psobj = @{
+                "credentials" = @{
+                  "password" = @{ "value" = $PlainPassword }
+                 }
+              }
+
+    [string]$method = "Put"
+    [string]$resource = "/api/v1/users/" + $uid
+    try
+    {
+        $request = _oktaNewCall -oOrg $oOrg -method $method -resource $resource -body $psobj
+    }
+    catch
+    {
+        if ($oktaVerbose -eq $true)
+        {
+            Write-Host -ForegroundColor red -BackgroundColor white $_.TargetObject
+        }
+        throw $_
+    }
+    foreach ($user in $request)
+    {
+        $user = OktaUserfromJson -user $user
+    }
+    return $request
+}
+
 function oktaConvertUsertoFederation()
 {
     param
@@ -2508,6 +2557,60 @@ function oktaListGroups()
     try
     {
         $request = _oktaNewCall -method $method -resource $resource -oOrg $oOrg -limit $limit
+    }
+    catch
+    {
+        if ($oktaVerbose -eq $true)
+        {
+            Write-Host -ForegroundColor red -BackgroundColor white $_.TargetObject
+        }
+        throw $_
+    }
+    return $request
+}
+
+function oktaAddgroupIDtoAppID
+{
+    param
+    (
+        [parameter(Mandatory=$false)][ValidateLength(1,100)][String]$oOrg=$oktaDefOrg,
+        [parameter(Mandatory=$true)][alias("groupID")][ValidateLength(20,20)][String]$gid,
+        [parameter(Mandatory=$true)][ValidateLength(20,20)][String]$aid
+    )
+
+    [string]$resource = "/api/v1/apps/" + $aid + "/groups/" + $gid
+    [string]$method = "Put"
+
+    try
+    {
+        $request = _oktaNewCall -method $method -resource $resource -oOrg $oOrg
+    }
+    catch
+    {
+        if ($oktaVerbose -eq $true)
+        {
+            Write-Host -ForegroundColor red -BackgroundColor white $_.TargetObject
+        }
+        throw $_
+    }
+    return $request
+}
+
+function oktaDelGroupIDfromAppID
+{
+    param
+    (
+        [parameter(Mandatory=$false)][ValidateLength(1,100)][String]$oOrg=$oktaDefOrg,
+        [parameter(Mandatory=$true)][alias("groupID")][ValidateLength(20,20)][String]$gid,
+        [parameter(Mandatory=$true)][ValidateLength(20,20)][String]$aid
+    )
+
+    [string]$resource = "/api/v1/apps/" + $aid + "/groups/" + $gid
+    [string]$method = "Delete"
+
+    try
+    {
+        $request = _oktaNewCall -method $method -resource $resource -oOrg $oOrg
     }
     catch
     {
@@ -3191,10 +3294,10 @@ function oktaEnrollFactorByUser()
     $params = New-Object System.Collections.Hashtable
 
     $body = @{
-             factorType = $factorType
-             provider = $provider
-             profile = $factorProfile
-             }
+             "factorType" = "$factorType"
+             "provider" = "$provider"
+             "profile" = $factorProfile
+             }  
     if ($verifyData)
     {
         $body.Add("verify", $verifyData)
