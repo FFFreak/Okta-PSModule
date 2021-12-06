@@ -1,5 +1,78 @@
+# Unload Org / API keys when this module is removed
 $ExecutionContext.SessionState.Module.OnRemove = {
     Remove-Module Okta_org
+}
+
+## SETTINGS ##
+# Desired TLS version
+$script:TLSver = "Tls12" # Should be from list from PoSH -> [Net.SecurityProtocolType].DeclaredMembers.Name
+
+# Load CMDLets and validate connectivity environment
+function OktaLoadEnvironment()
+{
+  param(
+    [Boolean]$Verbose = $false
+  )
+  ## SETTINGS ##
+  # Desired TLS version
+  $TLSver = $script:TLSver # MUST be from list from PoSH -> [Net.SecurityProtocolType].DeclaredMembers.Name
+  # Desired Module Names used
+
+  # Configure TLS
+  if ($Verbose) {Write-host "[OKTA]`tChecking TLS settings"}
+  if ([Net.ServicePointManager]::SecurityProtocol -eq $TLSver){
+    # Already set to set TLS version - Skip
+    if ($Verbose) {Write-host "[OKTA]`t`t...prior set" -foreground green}
+  } else {
+    if ($Verbose) {Write-host "[OKTA]`t`tCurrently: $([Net.ServicePointManager]::SecurityProtocol)"}
+    # can we set to 1.2?
+    $tlsVersionCheck = $null
+
+    $tlsVersionCheck = [Net.SecurityProtocolType].DeclaredMembers.Name
+    if ($tlsVersionCheck -ne $null){
+      if ($Verbose) {Write-host "[OKTA]`t`t`tGot TLS Sec Protocol via Declared Members"}
+    } else {
+      if ($Verbose) {Write-host "[OKTA]`t`t`tTrying to get TLS Sec Protocol via fallback method"}
+      $tlsVersionCheck = [enum]::GetNames([Net.SecurityProtocolType])
+    }
+    if ($tlsVersionCheck -contains $TLSver) {
+      if ($Verbose) {Write-host "[OKTA]`t`tAttempting change to $TLSver"}
+      # not on Tls12, but can be, lets change it
+      try {
+        [Net.ServicePointManager]::SecurityProtocol  = [Net.SecurityProtocolType]::$TLSver
+      } catch {Write-Warning $_.Exception.Message}
+    } else {
+      # Let's leave alone
+      if ($Verbose) {Write-host "[OKTA]`t`t`t...Do not see $TLSver as option" -foreground red} 
+    }
+    # validate
+    if ([Net.ServicePointManager]::SecurityProtocol -eq $TLSver){
+      if ($Verbose) {VerboseMsg -Success -Message "[OKTA]`t`t`t...success"}
+    } else {
+      if ($Verbose) {VerboseMsg -Warn -Message "[OKTA]`t`t`t...failed to set, but will attempt"} 
+    }
+  }
+
+  # System import - used for url checking and needs to be loaded
+  if ($Verbose) {Write-host "[OKTA]`tChecking system.Web Type import"}
+
+  if ((Get-TypeData -TypeName System.Web.*) -eq $null) {
+    # Add
+    Add-Type -AssemblyName System.Web
+
+    # Validate
+    if ((Get-TypeData -TypeName System.Web.*) -eq $null) {    
+      if ($Verbose) {write-host "[OKTA]`t`t...FAILED!" -foreground red}
+      write-host "Could not import System.web assemblies needed by Okta Powershell" -foreground red
+      write-host "Please manually attempt 'Add-Type -AssemblyName System.Web'" -foreground red
+      write-host "then re-run the script - exiting!" -foreground red
+      exit
+    } else {        
+      if ($Verbose) {write-host "[OKTA]`t`t...success" -foreground green}  
+    }
+  } else {
+    if ($Verbose) {write-host "[OKTA]`t`t...prior set" -foreground green}
+  }
 }
 
 function _oktaThrowError()
@@ -31,37 +104,39 @@ function _oktaThrowError()
     throw $formatError
 }
 
-function oktaNewPassword
-{
+function oktaNewPassword {
     param
     (
-        [Int32]$Length = 15,
-        [Int32]$MustIncludeSets = 3
+        [Int32]$Length = 15
     )
-
+    # Atleast, 1 character of each set will be utilized in the first (# of SETS) characters.
     $CharacterSets = @("ABCDEFGHIJKLMNOPQRSTUVWXYZ","abcdefghijklmnopqrstuvwzyz","0123456789","!$-#")
+    
+    if ($Length -lt ($CharacterSets.count)){
+        write-error "Password Length Must be larger than character sets in Function oktaNewPassword!"
+        exit
+    }
 
-    $Random = New-Object Random
-
+    # Will hold Final Password
     $Password = ""
-    $IncludedSets = ""
-    $IsNotComplex = $true
-    while ($IsNotComplex -or $Password.Length -lt $Length)
-    {
-        $Set = $Random.Next(0, 4)
-        if (!($IsNotComplex -and $IncludedSets -match "$Set" -And $Password.Length -lt ($Length - $IncludedSets.Length)))
-        {
-            if ($IncludedSets -notmatch "$Set")
-            {
-                $IncludedSets = "$IncludedSets$Set"
-            }
-            if ($IncludedSets.Length -ge $MustIncludeSets)
-            {
-                $IsNotcomplex = $false
-            }
 
-            $Password = "$Password$($CharacterSets[$Set].SubString($Random.Next(0, $CharacterSets[$Set].Length), 1))"
-        }
+    # Force 1 of each set for first Characters - this is because MATCH 3 can still fail if 2 of those 3 aren't upper and lowercase *smh*
+    # So you have a small, but not improbable risk of failing in the original code.  
+    # With the default sets key space is reduced from 68^Length, to [68^(Length - character sets)]*[4!][26][26][10][4]
+    # 648960 vs 21381376 for first 4 characters, and still very unlikely to be cracked based on the other characters AT length 15.
+    # over Ten Quattuorvigintillion....
+
+    $SetsToUse = (0..$($CharacterSets.count - 1))
+    while (@($SetsToUse).count -gt 0) {
+      $SetThisRound = $SetsToUse | get-random -count 1
+      $SetsToUse = $SetsToUse | ?{$_ -ne [int] $SetThisRound}
+      $Password =  "$Password$($CharacterSets[$SetThisRound][$(0..($CharacterSets[$SetThisRound].Length - 1) | Get-Random -Count 1)])"
+    }
+
+    while ($Password.Length -lt $Length)
+    {
+      $Set = (0..$($CharacterSets.count - 1)) | get-random -count 1
+      $Password +=  "$($CharacterSets[$Set][$(0..($CharacterSets[$Set].Length - 1) | Get-Random -Count 1)])"
     }
     return $Password
 }
@@ -494,9 +569,25 @@ function _oktaMakeCall()
             }
         }
     }
-    catch [System.Net.WebException], [Microsoft.PowerShell.Commands.HttpResponseException]
+    catch #[System.Net.WebException], [Microsoft.PowerShell.Commands.HttpResponseException]
     {
-        
+        Write-Verbose("Entering Catch")
+        #<# 
+        write-host "** FULL DEBUG **"
+        write-host "        URI:`r`n`t`t $uri"
+        write-host "     Method:`r`n`t`t $method"
+        write-host "  UserAgent:`r`n`t`t $userAgent"
+        write-host "    Headers:`r`n"
+        foreach ($h in $headers.Keys) {
+          if ($h -eq 'Authorization') {
+            Write-host "`t`t$h -> SSWS xXxXxXxxXxxXxXxXxxXx <MASKED>"
+          } else {
+            Write-host "`t`t$h -> $($headers[$h])"
+          }
+        }
+        write-host "ContentType:`r`n`t`t $contentType"
+        write-host "** Body BELOW **`r`n$postData"
+        # #>
         $code = $_.Exception.Response.StatusCode
         
         if ( $_.Exception.Response.Headers.Contains('X-Okta-Request-Id') )
@@ -560,11 +651,11 @@ function _oktaMakeCall()
             }
         }   
     }
-    catch
+    <#catch
     {
         Write-Warning("Catchall:" + $_.Exception.GetType().FullName + " : " + $_.Exception.Message )
         throw($_.Exception.Message)
-    }
+    }#>
 
     #Process Response Headers, debug, pagination and rate limiting
     if ( $request2 )
@@ -936,6 +1027,7 @@ function oktaPutProfileupdate()
     Add-Member -InputObject $psobj -MemberType NoteProperty -Name profile -Value $updates
 
     [string]$method = "Put"
+    # [string]$method = "POST"
     [string]$resource = "/api/v1/users/" + $uid
     try
     {
