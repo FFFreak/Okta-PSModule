@@ -1,5 +1,5 @@
 # note from FFFREAK
-If you get an error it found no orgs (can you created and filled in the org file) then load the okta module with "load-module Okta -force"  - not sure what in my code caused this.. but that is the fix : ?
+If you get an error it found no orgs (AND you created and filled in the org file) then load the okta module with "load-module Okta -force"  - not sure what in my code caused this.. but that is the fix : ?
 
 Original README by Matt Began below
 # Okta-PSModule Documentation
