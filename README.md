@@ -1,3 +1,7 @@
+# note from FFFREAK
+If you get an error it found no orgs (can you created and filled in the org file) then load the okta module with "load-module Okta -force"  - not sure what in my code caused this.. but that is the fix : ?
+
+Original README by Matt Began below
 # Okta-PSModule Documentation
 
 This is not to be confused with or in competition with the official Okta [Powershell/CSharp module](https://github.com/okta/oktasdk-csharp/tree/master/Okta.Core.Automation).
