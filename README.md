@@ -2,7 +2,9 @@
 If you get an error it found no orgs (AND you created and filled in the org file) then load the okta module with "load-module Okta -force"  - not sure what in my code caused this.. but that is the fix : ?  Could be fighting another unload in the PSD1 file.
 
 Also, if you get the error "You cannot call a method on a null-valued expression."
-Please run -> OktaLoadEnvironment
+
+Please run -> **OktaLoadEnvironment**
+
 This will set all crucial settings to make it work, like TLS, system imports, etc.
 I personally run this in all my scripts prior to other commands.
 
